@@ -19,9 +19,9 @@
 #include <wayland-cursor.h>
 #include <wayland-egl.h>
 
-#include "wayland/xdg-activation.h"
-#include "wayland/xdg-decoration.h"
-#include "wayland/xdg-shell.h"
+#include "xdg-activation-v1.h"
+#include "xdg-decoration-unstable-v1.h"
+#include "xdg-shell.h"
 
 #include "../../server/TracyImGui.hpp"
 
