@@ -1,0 +1,5 @@
+../public/common/tracy_lz4.cpp
+../public/common/tracy_lz4hc.cpp
+../public/common/TracySocket.cpp
+../public/common/TracyStackFrames.cpp
+../public/common/TracySystem.cpp
