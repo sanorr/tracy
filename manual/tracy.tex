@@ -772,6 +772,8 @@ We can also see that the graph gradually falls off to the right (representing lo
 \subsection{Building the server}
 \label{buildingserver}
 
+Tracy uses the CMake build system. Unlike in most other programs, the root-level \texttt{CMakeLists.txt} file is only used to provide client integration. The build definition files used to create profiler executables are stored in directories specific to each utility.
+
 The easiest way to get going is to build the data analyzer, available in the \texttt{profiler} directory. Then, you can connect to localhost or remote clients and view the collected data right away with it.
 
 If you prefer to inspect the data only after a trace has been performed, you may use the command-line utility in the \texttt{capture} directory. It will save a data dump that you may later open in the graphical viewer application.
@@ -783,6 +785,26 @@ See section~\ref{capturing} for more information about performing captures.
 \begin{bclogo}[
 noborder=true,
 couleur=black!5,
+logo=\bclampe
+]{How to use CMake}
+The \texttt{CMakeLists.txt} file only contains the general definition of how the program should be built. To be able to actually compile the program, you must first create a build directory that takes into account the specific compiler you have on your system, the set of available libraries, the build options you specify, and so on. You can do this by issuing the following command, in this case for the \texttt{profiler} utility:
+
+\begin{lstlisting}[language=sh]
+cmake -B profiler/build -S profiler
+\end{lstlisting}
+
+Now that you have a build directory, you can actually compile the program. For example, you could run the following command:
+
+\begin{lstlisting}[language=sh]
+cmake --build profiler/build --config Release --parallel
+\end{lstlisting}
+
+The build directory can be reused if you want to compile the program in the future, for example if there have been some updates to the source code, and usually does not need to be regenerated. Note that all build artifacts are contained in the build directory.
+\end{bclogo}
+
+\begin{bclogo}[
+noborder=true,
+couleur=black!5,
 logo=\bcbombe
 ]{Important}
 Due to the memory requirements for data storage, the Tracy server is only supposed to run on 64-bit platforms. While nothing prevents the program from building and executing in a 32-bit environment, doing so is not supported.
@@ -790,44 +812,49 @@ Due to the memory requirements for data storage, the Tracy server is only suppos
 
 \subsubsection{Required libraries}
 
-To build the application contained in the \texttt{profiler} directory, you will need to install external libraries, which are not bundled with Tracy.
+The core libraries necessary for the building of Tracy utilities are:
 
-\subparagraph{Capstone library} At the time of writing, the capstone library is in a bit of disarray. The officially released version 4.0.2 can't disassemble some AVX instructions, which are successfully parsed by the \texttt{next} branch. However, the \texttt{next} branch somehow lost information about input/output registers for some functions. You may want to explore the various available versions to find one that suits your needs the best. Note that only the \texttt{next} branch is actively maintained. Be aware that your package manager might distribute the deprecated \texttt{master} branch.
+\begin{itemize}
+\item capstone
+\item glfw
+\item freetype
+\end{itemize}
+
+The capstone library will always be downloaded from GitHub when the CMake build directory is created, unless you have it installed on your system and set the specific build option. You must have git installed for this download to work. Using the capstone library provided by package managers is not recommended, as these packages are typically slow to provide up-to-date versions of the library, and the API may be incompatible.
+
+It is recommended that you install the glfw and freetype libraries on your system so that Tracy can find them with \texttt{pkg-config}. However, if these libraries are not available, they will be downloaded from GitHub.
 
 \paragraph{Windows}
 
-On Windows, you will need to use the \texttt{vcpkg} utility. If you are not familiar with this tool, please read the description at the following address: \url{https://docs.microsoft.com/en-us/cpp/build/vcpkg}.
-
-There are two ways you can run \texttt{vcpkg} to install the dependencies for Tracy:
-
-\begin{itemize}
-\item Local installation within the project directory -- run this script to download and build both \texttt{vcpkg} and the required dependencies:
-\begin{lstlisting}[language=sh]
-vcpkg\install_vcpkg_dependencies.bat
-\end{lstlisting}
-This writes files only to the \texttt{vcpkg\textbackslash{}vcpkg} directory and makes no other changes on your machine.
-\item System-wide installation with Manifest mode -- install \texttt{vcpkg} by following the instructions on its website, make sure that the environment variable \texttt{VCPKG\_ROOT} is set to the path where you have clone the repository, and then execute the following command:
-\begin{lstlisting}[language=sh]
-vcpkg integrate install
-\end{lstlisting}
-After this step, you can use any Visual Studio project files to build as usual.
-Dependencies will be installed automatically based on vcpkg manifest listing (the \texttt{vcpkg.json} file at repository root).
-For more information about vcpkg manifest mode in Visual Studio, you can read more details at the following address: \url{https://vcpkg.io/en/docs/users/manifests.html#msbuild-integration}.
-\end{itemize}
+There is no need to install external libraries (e.g. with vcpkg). All libraries are downloaded automatically by CMake. You still need git, though.
 
 \paragraph{Unix}
 
-On Unix systems you will need to install the \texttt{pkg-config} utility and the following libraries: \texttt{glfw}, \texttt{freetype}, \texttt{capstone}, \texttt{dbus}. Some Linux distributions will require you to add a \texttt{lib} prefix and a \texttt{-dev}, or \texttt{-devel} postfix to library names. You may also need to add a seemingly random number to the library name (for example: \texttt{freetype2}, or \texttt{freetype6}). Be aware that your package manager might distribute the deprecated \texttt{master}-branch version of \texttt{capstone}, and a build from source from the \texttt{next}-branch might be necessary for you. Have fun!
+On Unix systems (including Linux), you will need to install the \texttt{pkg-config} utility to provide information about libraries.
 
-In addition to the beforementioned libraries, you might also have to install the \texttt{tbb} library\footnote{Technically this is not a dependency of Tracy but rather of \texttt{libstdc++} but it may still not be installed by default.}.
+Due to some questionable design decisions by the compiler developers, you will most likely also need the \texttt{tbb} library\footnote{Technically, this is not a Tracy dependency, but rather a \texttt{libstdc++} dependency, but it may still not be installed by default.}. If not found, this library is downloaded automatically.
 
 Installation of the libraries on OSX can be facilitated using the \texttt{brew} package manager.
 
-\subparagraph{Wayland}
+\paragraph{Linux}
 
-Linux builds of Tracy use the Wayland protocol by default, which allows proper support for Hi-DPI scaling and high-precision input devices such as touchpads. As such, the \texttt{glfw} library is no longer needed, but you will have to install \texttt{libxkbcommon}, \texttt{wayland}, \texttt{libglvnd} (or \texttt{libegl} on some distributions).
+There are some Linux-specific libraries that you need to have installed on your system. These won't be downloaded automatically.
 
-You can build the profiler the old way on Linux by enabling the \texttt{LEGACY} flag, e.g. by issuing the following build command \texttt{make LEGACY=1}.
+For XDG Portal support in the file selector, you need to install the \texttt{dbus} library. If you're one of those weird people who doesn't like modern things, you can install \texttt{gtk3} instead and force the GTK file selector with a build option.
+
+Linux builds of Tracy use the Wayland protocol by default, which allows proper support for Hi-DPI scaling and high-precision input devices such as touchpads. As such, the \texttt{glfw} library is no longer needed, but you will need to install \texttt{libxkbcommon}, \texttt{wayland}, \texttt{wayland-protocols}, \texttt{libglvnd} (or \texttt{libegl} on some distributions).
+
+If you want to use X11 instead, you can enable the \texttt{LEGACY} option in CMake build settings.
+
+\begin{bclogo}[
+noborder=true,
+couleur=black!5,
+logo=\bcbombe
+]{Linux distributions}
+Some Linux distributions require you to add a \texttt{lib} prefix and a \texttt{-dev} or \texttt{-devel} postfix to library names. You may also need to add a seemingly random number to the library name (for example: \texttt{freetype2}, or \texttt{freetype6}).
+
+Some Linux distributions ship outdated versions of libraries that are too old for Tracy to build, and do not provide new versions by design. Please reconsider your choice of distribution in this case, as the only function of a Linux distribution is to provide packages, and the one you have chosen is clearly failing at this task.
+\end{bclogo}
 
 \begin{bclogo}[
 noborder=true,
@@ -836,12 +863,6 @@ logo=\bcbombe
 ]{Window decorations}
 Please don't ask about window decorations in Gnome. The current behavior is the intended behavior. Gnome does not want windows to have decorations, and Tracy respects that choice. If you find this problematic, use a desktop environment that actually listens to its users.
 \end{bclogo}
-
-\subsubsection{Build process}
-
-As mentioned earlier, each utility is contained in its own directory, for example \texttt{profiler} or \texttt{capture}\footnote{Other utilities are contained in the \texttt{csvexport}, \texttt{import-chrome} and \texttt{update} directories.}. Where do you go within these directories depends on the operating system you are using.
-
-On Windows navigate to the \texttt{build/win32} directory and open the solution file in Visual Studio. On Unix go to the \texttt{build/unix} directory and build the \texttt{release} target using GNU make.
 
 \subsubsection{Embedding the server in profiled application}
 \label{embeddingserver}
@@ -2010,6 +2031,55 @@ However, the validation comes with a performance cost, which you may not want to
 
 There is no explicit support for transient zones (section~\ref{transientzones}) in the C API macros. However, this functionality can be implemented by following instructions outlined in section~\ref{capibindings}.
 
+\subsubsection{Lock markup}
+
+Marking locks in the C API is done with the following macros:
+
+\begin{itemize}
+\item \texttt{TracyCLockAnnounce(lock\_ctx)}
+\item \texttt{TracyCLockTerminate(lock\_ctx)}
+\item \texttt{TracyCLockBeforeLock(lock\_ctx)}
+\item \texttt{TracyCLockAfterLock(lock\_ctx)}
+\item \texttt{TracyCLockAfterUnlock(lock\_ctx)}
+\item \texttt{TracyCLockAfterTryLock(lock\_ctx, acquired)}
+\item \texttt{TracyCLockMark(lock\_ctx)}
+\item \texttt{TracyCLockCustomName(lock\_ctx, name, size)}
+\end{itemize}
+
+Additionally a lock context has to be defined next to the lock that it will be marking:
+
+\begin{lstlisting}
+TracyCLockCtx tracy_lock_ctx;
+HANDLE lock;
+\end{lstlisting}
+
+To initialize the lock context use \texttt{TracyCLockAnnounce}, this should be done when the lock you are marking is initialized/created. When the lock is destroyed use \texttt{TracyCLockTerminate}, this will free the lock context. You can use the \texttt{TracyCLockCustomName} macro to name a lock.
+
+You must markup both before and after acquiring a lock:
+
+\begin{lstlisting}
+TracyCLockBeforeLock(tracy_lock_ctx);
+WaitForSingleObject(lock, INFINITE);
+TracyCLockAfterLock(tracy_lock_ctx);
+\end{lstlisting}
+
+If acquiring the lock may fail, you should instead use the \texttt{TracyCLockAfterTryLock} macro:
+
+\begin{lstlisting}
+TracyCLockBeforeLock(tracy_lock_ctx);
+int acquired = WaitForSingleObject(lock, 200) == WAIT_OBJECT_0;
+TracyCLockAfterTryLock(tracy_lock_ctx, acquired);
+\end{lstlisting}
+
+After you release the lock use the \texttt{TracyCLockAfterUnlock} macro:
+
+\begin{lstlisting}
+ReleaseMutex(lock);
+TracyCLockAfterUnlock(tracy_lock_ctx);
+\end{lstlisting}
+
+You can optionally mark the location of where the lock is held by using the \texttt{TracyCLockMark} macro, this should be done after acquiring the lock.
+
 \subsubsection{Memory profiling}
 
 Use the following macros in your implementations of \texttt{malloc} and \texttt{free}:
@@ -2131,6 +2201,131 @@ logo=\bcbombe
 Since you are directly calling the profiler functions here, you will need to take care of manually
 disabling the code if the \texttt{TRACY\_ENABLE} macro is not defined.
 \end{bclogo}
+
+\subsection{Python API}
+\label{pythonapi}
+
+To profile Python code using Tracy, a Python package can be built. This is done using the excellent C++11 based Python bindings generator pybind11, see \url{https://pybind11.readthedocs.io}.
+As a first step, a Tracy-Client shared library needs to be built (with the compile definitions you want to use) and then pybind11 is used to create the Python-bindings.
+Afterwards, a Python c-extension package can be created (the package will be platform and Python version dependent).
+
+An especially powerful feature is the ability to profile Python code and any other C/C++ code used in a single code base as long as the C/C++ code links to the same shared Tracy-Client library that is installed with the Python package.
+
+\subsubsection{Bindings}
+
+An example of how to use the Tracy-Client bindings is shown below:
+
+\begin{lstlisting}
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+from time import sleep
+
+import numpy as np
+
+import tracy_client as tracy
+
+
+@tracy.ScopedFrameDecorator("framed")
+@tracy.ScopedZoneDecorator(name="work", color=tracy.ColorType.Red4)
+def work():
+    sleep(0.05)
+
+
+def main():
+    assert tracy.program_name("MyApp")
+    assert tracy.app_info("this is a python app")
+
+    tracy.thread_name("python")  # main thread so bit useless
+
+    plot_id = tracy.plot_config("plot", tracy.PlotFormatType.Number)
+    assert plot_id is not None
+
+    mem_id = None
+
+    index = 0
+    while True:
+        with tracy.ScopedZone(name="test", color=tracy.ColorType.Coral) as zone:
+            index += 1
+
+            tracy.frame_mark()
+
+            inner = tracy.ScopedZone(depth=5, color=tracy.ColorType.Coral)
+            inner.color(index % 5)
+            inner.name(str(index))
+            inner.enter()
+
+            if index % 2:
+                tracy.alloc(44, index)
+            else:
+                tracy.free(44)
+
+            if not index % 2:
+                if mem_id is None:
+                    mem_id = tracy.alloc(1337000000, index, name="named", depth=4)
+                    assert mem_id is not None
+                else:
+                    tracy.alloc(1337000000, index, id=mem_id, depth=4)
+            else:
+                tracy.free(1337000000, mem_id, 4)
+
+            with tracy.ScopedFrame("custom"):
+
+                image = np.full([400, 400, 4], index, dtype=np.uint8)
+                assert tracy.frame_image(image.tobytes(), 400, 400)
+
+            inner.exit()
+
+            zone.text(index)
+
+            assert tracy.message(f"we are at index {index}")
+            assert tracy.message(f"we are at index {index}", tracy.ColorType.Coral)
+
+            assert tracy.plot(plot_id, index)
+
+            work()
+
+            sleep(0.1)
+
+
+if __name__ == "__main__":
+    main()
+\end{lstlisting}
+
+Please not the use of ids as way to cope with the need for unique pointers for certain features of the Tracy profiler, see section~\ref{uniquepointers}.
+
+\subsubsection{Building the Python package}
+
+To build the Python package, you will need to use the CMake build system to compile the Tracy-Client.
+The CMake option \texttt{-D TRACY\_CLIENT\_PYTHON=ON} is used to enable the generation of the Python bindings in conjunction with a mandatory creation of a shared Tracy-Client library via one of the CMake options \texttt{-D BUILD\_SHARED\_LIBS=ON} or \texttt{-D DEFAULT\_STATIC=OFF}.
+
+The following other variables are available in addition:
+
+\begin{itemize}
+\item \texttt{EXTERNAL\_PYBIND11} --- Can be used to disable the download of pybind11 when Tracy is embedded in another CMake project that already uses pybind11.
+\item \texttt{TRACY\_CLIENT\_PYTHON\_TARGET} --- Optional directory to copy Tracy Python bindings to when Tracy is embedded in another CMake project.
+\item \texttt{BUFFER\_SIZE} --- The size of the global pointer buffer (defaults to 128) for naming Tracy profiling entities like frame marks, plots, and memory locations.
+\item \texttt{NAME\_LENGTH} --- The maximum length (defaults to 128) of a name stored in the global pointer buffer.
+\end{itemize}
+
+Be aware that the memory allocated by this buffer is global and is not freed, see section~\ref{uniquepointers}.
+
+See below for example steps to build the Python bindings using CMake:
+
+\begin{lstlisting}
+mkdir build
+cd build
+cmake -DTRACY_STATIC=OFF -DTRACY_CLIENT_PYTHON=ON ../
+\end{lstlisting}
+
+Once this has finished building the Python package can be built as follows:
+
+\begin{lstlisting}
+cd ../python
+python3 setup.py bdist_wheel
+\end{lstlisting}
+
+The created package will be in the folder \texttt{python/dist}.
 
 \subsection{Automated data collection}
 \label{automated}
@@ -2390,6 +2585,8 @@ The \emph{discovered clients} list is only displayed if clients are broadcasting
 \end{figure}
 
 Both connecting to a client and opening a saved trace will present you with the main profiler view, which you can use to analyze the data (see section~\ref{analyzingdata}).
+
+Once connected to a client \keys{\ctrl + \shift + \Alt + R} can be used to quickly discard any captured data and reconnect to a client at the same address.
 
 \subsubsection{Connection information pop-up}
 \label{connectionpopup}
@@ -3190,7 +3387,13 @@ Data displayed in this mode is, in essence, very similar to the instrumentation 
 
 First and foremost, the presented information is constructed from many call stack samples, which represent real addresses in the application's binary code, mapped to the line numbers in the source files. This reverse mapping may not always be possible or could be erroneous. Furthermore, due to the nature of the sampling process, it is impossible to obtain exact time measurements. Instead, time values are guesstimated by multiplying the number of sample counts by mean time between two different samples.
 
-The \emph{Name} column contains name of the function in which the sampling was done. Kernel-mode function samples are distinguished with the red color. If the \emph{\faSitemap{}~Inlines} option is enabled, functions which were inlined will be preceded with a \faCaretRight{} symbol and additionally display their parent function name in parenthesis. Otherwise, only non-inlined functions are listed, with a count of inlined functions in parenthesis. You may expand any entry containing an inlined function to display the corresponding functions list (some functions may be hidden if the \emph{\faPuzzlePiece{}~Show all} option is disabled due to lack of sampling data). Clicking on a function name will open the sample entry call stacks window (see chapter~\ref{sampleparents}). Note that if inclusive times are displayed, listed functions will be partially or completely coming from mid-stack frames, preventing, or limiting the capability to display parent call stacks.
+The sample statistics list symbols, not functions. These terms are similar, but not exactly the same. A symbol always has a base function that gives it its name. In most cases, a symbol will also contain a number of inlined functions. In some cases, the same function may be inlined more than once within the same symbol.
+
+The \emph{Name} column contains name of the symbol in which the sampling was done. Kernel-mode symbol samples are distinguished with the red color. Symbols containing inlined functions are listed with the number of inlined functions in parentheses and can be expanded to show all inlined functions (some functions may be hidden if the \emph{\faPuzzlePiece{}~Show all} option is disabled due to lack of sampling data). Clicking on a function name will open the sample entry call stacks window (see chapter~\ref{sampleparents})\footnote{Note that if inclusive times are displayed, listed functions will be partially or completely coming from mid-stack frames, preventing, or limiting the capability to display parent call stacks.}.
+
+By default, each inlining of a function is listed separately. If you prefer to combine the measurements for functions that are inlined multiple times within a function, you can do so by enabling the \emph{\faLayerGroup{}~Aggregate} option. You cannot view sample entry call stacks of inlined functions when this grouping method is enabled.
+
+If the \emph{\faSitemap{}~Inlines} option is enabled, the list will show all functions without grouping them by symbol. In this mode, inline functions are preceded by a \faCaretRight{} symbol and their parent function name is displayed in parentheses.
 
 The \emph{Location} column displays the corresponding source file name and line number. Depending on the \emph{Location} option selection, it can either show the function entry address or the instruction at which the sampling was performed. The \emph{Entry} mode points at the beginning of a non-inlined function or at the place where the compiler inserted an inlined function in its parent function. The \emph{Sample} mode is not useful for non-inlined functions, as it points to one randomly selected sampling point out of many that were captured. However, in the case of inlined functions, this random sampling point is within the inlined function body. Using these options in tandem lets you look at both the inlined function code and the place where it was inserted. If the \emph{Smart} location is selected, the profiler will display the entry point position for non-inlined functions and sample location for inlined functions. Selecting the \emph{\faAt{}~Address} option will instead print the symbol address.
 
@@ -3198,11 +3401,21 @@ The location data is complemented by the originating executable image name, cont
 
 The profiler may not find some function locations due to insufficient debugging data available on the client-side. To filter out such entries, use the \emph{\faEyeSlash{}~Hide unknown} option.
 
-The \emph{Time} or \emph{Count} column (depending on the \emph{\faStopwatch{}~Show time} option selection) shows number of taken samples, either as a raw count, or in an easier to understand time format. Note that the percentage value of time is calculated relative to the wall-clock time. The percentage value of sample counts is relative to the total number of collected samples.
+The \emph{Time} or \emph{Count} column (depending on the \emph{\faStopwatch{}~Show time} option selection) shows number of taken samples, either as a raw count, or in an easier to understand time format. Note that the percentage value of time is calculated relative to the wall-clock time. The percentage value of sample counts is relative to the total number of collected samples. You can also make the percentages of inline functions relative to the base symbol measurements by enabling the \emph{\faLink{}~Base relative} option.
 
 The last column, \emph{Code size}, displays the size of the symbol in the executable image of the program. Since inlined routines are directly embedded into other functions, their symbol size will be based on the parent symbol and displayed as 'less than'. In some cases, this data won't be available. If the symbol code has been retrieved\footnote{Symbols larger than 128~KB are not captured.} symbol size will be prepended with the \texttt{\faDatabase}~icon, and clicking the \RMB{}~right mouse button on the location column entry will open symbol view window (section~\ref{symbolview}).
 
 Finally, the list can be filtered using the \emph{\faFilter{}~Filter symbols} entry field, just like in the instrumentation mode case. Additionally, you can also filter results by the originating image name of the symbol. You may disable the display of kernel symbols with the \emph{\faHatWizard{}~Include kernel} switch. The exclusive/inclusive time counting mode can be switched using the \emph{~Timing} menu (non-reentrant timing is not available in the Sampling view). Limiting the time range is also available but is restricted to self-time. If the \emph{\faPuzzlePiece{}~Show all} option is selected, the list will include not only the call stack samples but also all other symbols collected during the profiling process (this is enabled by default if no sampling was performed).
+
+A simple CSV document containing the visible zones after filtering and limiting can be copied to the clipboard with the button adjacent to the visible zones count. The document contains the following columns:
+
+\begin{itemize}
+  \item \texttt{name} -- Zone name
+  \item \texttt{src\_file} -- Source file where the zone was set
+  \item \texttt{src\_line} -- Line in the source file where the zone was set
+  \item \texttt{total\_ns} -- Total zone time in nanoseconds
+  \item \texttt{counts} -- Zone count
+\end{itemize}
 
 \subsubsection{GPU zones mode}
 
@@ -3471,7 +3684,7 @@ The \emph{\faTree{}~Bottom-up call stack tree} pane is only available, if the me
 
 Each tree node consists of the function name, the source file location, and the memory allocation data. The memory allocation data is either yellow \emph{inclusive} events count (allocations performed by children) or the cyan \emph{exclusive} events count (allocations that took place in the node)\footnote{Due to the way call stacks work, there is no possibility for an entry to have both inclusive and exclusive counts, in an adequately instrumented program.}. Two values are counted: total memory size and number of allocations.
 
-The \emph{Group by function name} option controls how tree nodes are grouped. If it is disabled, the grouping is performed at a machine instruction-level granularity. This may result in a very verbose output, but the displayed source locations are precise. To make the tree more readable, you may opt to perform grouping at the function name level, which will result in less valid source file locations, as multiple entries are collapsed into one.
+The \emph{\faLayerGroup{}~Group by function name} option controls how tree nodes are grouped. If it is disabled, the grouping is performed at a machine instruction-level granularity. This may result in a very verbose output, but the displayed source locations are precise. To make the tree more readable, you may opt to perform grouping at the function name level, which will result in less valid source file locations, as multiple entries are collapsed into one.
 
 Enabling the \emph{Only active allocations} option will limit the call stack tree only to display active allocations. Enabling \emph{Only inactive allocations} option will have similar effect for inactive allocations. Both are mutually exclusive, enabling one disables the other. Displaing inactive allocations, when combined with \emph{Limit range}, will show short lived allocatios highlighting potentially unwanted behavior in the code.
 
@@ -3620,7 +3833,7 @@ This window can operate in one of the two modes. The first one is quite simple, 
 
 \subsubsection{Source file view}
 
-In source view mode, you can view the source code of the profiled application to take a quick glance at the context of the function behavior you are analyzing. The profiler will highlight the selected line (for example, a location of a profiling zone) both in the source code listing and on the scroll bar.
+In source view mode, you can view the source code of the profiled application to take a quick glance at the context of the function behavior you are analyzing. The profiler will highlight the selected line (for example, a location of a profiling zone) both in the source code listing and on the scroll bar. The contents of the file displayed in the source view can be copied to the clipboard using the button adjacent to the file name.
 
 \begin{bclogo}[
 noborder=true,
@@ -3971,10 +4184,6 @@ The profiler never prunes user settings.
 \section{License}
 
 \verbatiminput{../LICENSE.}
-
-\section{List of contributors}
-
-\verbatiminput{../AUTHORS.}
 
 \section{Inventory of external libraries}
 

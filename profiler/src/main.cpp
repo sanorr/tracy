@@ -3,6 +3,7 @@
 #include <atomic>
 #include <chrono>
 #include <inttypes.h>
+#define IMGUI_DEFINE_MATH_OPERATORS 1
 #include <imgui.h>
 #include <mutex>
 #include <stdint.h>
@@ -29,23 +30,23 @@
 
 #include "../../public/common/TracyProtocol.hpp"
 #include "../../public/common/TracyVersion.hpp"
+#include "profiler/TracyBadVersion.hpp"
+#include "profiler/TracyConfig.hpp"
+#include "profiler/TracyFileselector.hpp"
+#include "profiler/TracyImGui.hpp"
+#include "profiler/TracyMouse.hpp"
+#include "profiler/TracyProtoHistory.hpp"
+#include "profiler/TracyStorage.hpp"
+#include "profiler/TracyTexture.hpp"
+#include "profiler/TracyView.hpp"
+#include "profiler/TracyWeb.hpp"
+#include "profiler/IconsFontAwesome6.h"
 #include "../../server/tracy_pdqsort.h"
 #include "../../server/tracy_robin_hood.h"
-#include "../../server/TracyBadVersion.hpp"
-#include "../../server/TracyConfig.hpp"
 #include "../../server/TracyFileHeader.hpp"
 #include "../../server/TracyFileRead.hpp"
-#include "../../server/TracyFileselector.hpp"
-#include "../../server/TracyImGui.hpp"
-#include "../../server/TracyMouse.hpp"
 #include "../../server/TracyPrint.hpp"
-#include "../../server/TracyProtoHistory.hpp"
-#include "../../server/TracyStorage.hpp"
-#include "../../server/TracyTexture.hpp"
-#include "../../server/TracyView.hpp"
-#include "../../server/TracyWeb.hpp"
 #include "../../server/TracyWorker.hpp"
-#include "../../server/IconsFontAwesome6.h"
 
 #include "icon.hpp"
 #include "zigzag01.hpp"
@@ -96,6 +97,10 @@ static std::atomic<ViewShutdown> viewShutdown { ViewShutdown::False };
 static double animTime = 0;
 static float dpiScale = 1.f;
 static bool dpiScaleOverriddenFromEnv = false;
+static float userScale = 1.f;
+static float prevScale = 1.f;
+static int dpiChanged = 0;
+static bool dpiFirstSetup = true;
 static Filters* filt;
 static RunQueue mainThreadTasks;
 static uint32_t updateVersion = 0;
@@ -111,7 +116,7 @@ void* zigzagTex;
 static Backend* bptr;
 static bool s_customTitle = false;
 static bool s_isElevated = false;
-static tracy::Config s_config;
+tracy::Config s_config;
 
 static void SetWindowTitleCallback( const char* title )
 {
@@ -133,9 +138,25 @@ static void RunOnMainThread( const std::function<void()>& cb, bool forceDelay = 
     mainThreadTasks.Queue( cb, forceDelay );
 }
 
-static void SetupDPIScale( float scale, ImFont*& cb_fixedWidth, ImFont*& cb_bigFont, ImFont*& cb_smallFont )
+static void ScaleWindow(ImGuiWindow* window, float scale)
 {
-    LoadFonts( scale, cb_fixedWidth, cb_bigFont, cb_smallFont );
+    ImVec2 origin = window->Viewport->Pos;
+    window->Pos = ImFloor((window->Pos - origin) * scale + origin);
+    window->Size = ImTrunc(window->Size * scale);
+    window->SizeFull = ImTrunc(window->SizeFull * scale);
+    window->ContentSize = ImTrunc(window->ContentSize * scale);
+}
+
+static void SetupDPIScale()
+{
+    auto scale = dpiScale * userScale;
+
+    if( !dpiFirstSetup && prevScale == scale ) return;
+    dpiFirstSetup = false;
+    dpiChanged = 2;
+
+    LoadFonts( scale );
+    if( view ) view->UpdateFont( s_fixedWidth, s_smallFont, s_bigFont );
 
 #ifdef __APPLE__
     // No need to upscale the style on macOS, but we need to downscale the fonts.
@@ -162,11 +183,24 @@ static void SetupDPIScale( float scale, ImFont*& cb_fixedWidth, ImFont*& cb_bigF
     stbir_resize_uint8( iconPx, iconX, iconY, 0, scaleIcon, ty, ty, 0, 4 );
     tracy::UpdateTextureRGBA( iconTex, scaleIcon, ty, ty );
     delete[] scaleIcon;
+
+    const auto ratio = scale / prevScale;
+    prevScale = scale;
+    auto ctx = ImGui::GetCurrentContext();
+    for( auto& w : ctx->Windows ) ScaleWindow( w, ratio );
 }
 
-static void SetupScaleCallback( float scale, ImFont*& cb_fixedWidth, ImFont*& cb_bigFont, ImFont*& cb_smallFont )
+static void SetupScaleCallback( float scale )
 {
-    RunOnMainThread( [scale, &cb_fixedWidth, &cb_bigFont, &cb_smallFont] { SetupDPIScale( scale * dpiScale, cb_fixedWidth, cb_bigFont, cb_smallFont ); }, true );
+    userScale = scale;
+    RunOnMainThread( []{ SetupDPIScale(); }, true );
+}
+
+static int IsBusy()
+{
+    if( loadThread.joinable() ) return 2;
+    if( view && !view->IsBackgroundDone() ) return 1;
+    return 0;
 }
 
 static void LoadConfig()
@@ -177,6 +211,7 @@ static void LoadConfig()
 
     int v;
     if( ini_sget( ini, "core", "threadedRendering", "%d", &v ) ) s_config.threadedRendering = v;
+    if( ini_sget( ini, "core", "focusLostLimit", "%d", &v ) ) s_config.focusLostLimit = v;
     if( ini_sget( ini, "timeline", "targetFps", "%d", &v ) && v >= 1 && v < 10000 ) s_config.targetFps = v;
 
     ini_free( ini );
@@ -190,6 +225,7 @@ static bool SaveConfig()
 
     fprintf( f, "[core]\n" );
     fprintf( f, "threadedRendering = %i\n", (int)s_config.threadedRendering );
+    fprintf( f, "focusLostLimit = %i\n", (int)s_config.focusLostLimit );
 
     fprintf( f, "\n[timeline]\n" );
     fprintf( f, "targetFps = %i\n", s_config.targetFps );
@@ -204,7 +240,7 @@ static void ScaleChanged( float scale )
     if ( dpiScale == scale ) return;
 
     dpiScale = scale;
-    SetupDPIScale( dpiScale, s_fixedWidth, s_bigFont, s_smallFont );
+    SetupDPIScale();
 }
 
 int main( int argc, char** argv )
@@ -307,7 +343,7 @@ int main( int argc, char** argv )
     LoadConfig();
 
     ImGuiTracyContext imguiContext;
-    Backend backend( title, DrawContents, ScaleChanged, &mainThreadTasks );
+    Backend backend( title, DrawContents, ScaleChanged, IsBusy, &mainThreadTasks );
     tracy::InitTexture();
     iconTex = tracy::MakeTexture();
     zigzagTex = tracy::MakeTexture( true );
@@ -327,7 +363,7 @@ int main( int argc, char** argv )
         }
     }
 
-    SetupDPIScale( dpiScale, s_fixedWidth, s_bigFont, s_smallFont );
+    SetupDPIScale();
 
     tracy::UpdateTextureRGBAMips( zigzagTex, (void**)zigzagPx, zigzagX, zigzagY, 6 );
     for( auto& v : zigzagPx ) free( v );
@@ -508,6 +544,15 @@ static void UpdateBroadcastClients()
     }
 }
 
+static void TextComment( const char* str )
+{
+    ImGui::SameLine();
+    ImGui::PushFont( s_smallFont );
+    ImGui::AlignTextToFramePadding();
+    tracy::TextDisabledUnformatted( str );
+    ImGui::PopFont();
+}
+
 static void DrawContents()
 {
     static bool reconnect = false;
@@ -578,10 +623,13 @@ static void DrawContents()
         ImGui::PushFont( s_bigFont );
         tracy::TextCentered( buf );
         ImGui::PopFont();
-        ImGui::SameLine( ImGui::GetWindowContentRegionMax().x - ImGui::CalcTextSize( ICON_FA_WRENCH ).x - ImGui::GetStyle().FramePadding.x * 2 );
-        if( ImGui::Button( ICON_FA_WRENCH ) )
+        if( dpiChanged == 0 )
         {
-            ImGui::OpenPopup( "About Tracy" );
+            ImGui::SameLine( ImGui::GetWindowContentRegionMax().x - ImGui::CalcTextSize( ICON_FA_WRENCH ).x - ImGui::GetStyle().FramePadding.x * 2 );
+            if( ImGui::Button( ICON_FA_WRENCH ) )
+            {
+                ImGui::OpenPopup( "About Tracy" );
+            }
         }
         bool keepOpenAbout = true;
         if( ImGui::BeginPopupModal( "About Tracy", &keepOpenAbout, ImGuiWindowFlags_AlwaysAutoResize ) )
@@ -597,7 +645,7 @@ static void DrawContents()
             ImGui::TextUnformatted( "Created by Bartosz Taudul" );
             ImGui::SameLine();
             tracy::TextDisabledUnformatted( "<wolf@nereid.pl>" );
-            tracy::TextDisabledUnformatted( "Additional authors listed in AUTHORS file and in git history." );
+            tracy::TextDisabledUnformatted( "Additional authors listed in git history." );
             ImGui::Separator();
             if( ImGui::TreeNode( ICON_FA_TOOLBOX " Global settings" ) )
             {
@@ -611,6 +659,9 @@ static void DrawContents()
                 ImGui::SameLine();
                 tracy::DrawHelpMarker( "Restricts rendering to a single CPU core. Can reduce profiler frame rate." );
                 ImGui::Unindent();
+
+                ImGui::Spacing();
+                if( ImGui::Checkbox( "Reduce render rate when focus is lost", &s_config.focusLostLimit ) ) SaveConfig();
 
                 ImGui::Spacing();
                 ImGui::TextUnformatted( "Target FPS" );
@@ -652,34 +703,46 @@ static void DrawContents()
                 tracy::OpenWebpage( "https://github.com/wolfpld/tracy" );
             }
             ImGui::Separator();
+            if( ImGui::Selectable( ICON_FA_VIDEO " An Introduction to Tracy Profiler in C++ - Marcos Slomp - CppCon 2023" ) )
+            {
+                tracy::OpenWebpage( "https://youtu.be/ghXk3Bk5F2U?t=37" );
+            }
+            ImGui::Separator();
             if( ImGui::Selectable( ICON_FA_VIDEO " New features in v0.8" ) )
             {
                 tracy::OpenWebpage( "https://www.youtube.com/watch?v=30wpRpHTTag" );
             }
+            TextComment( "2022-03-28" );
             if( ImGui::Selectable( ICON_FA_VIDEO " New features in v0.7" ) )
             {
                 tracy::OpenWebpage( "https://www.youtube.com/watch?v=_hU7vw00MZ4" );
             }
+            TextComment( "2020-06-11" );
             if( ImGui::Selectable( ICON_FA_VIDEO " New features in v0.6" ) )
             {
                 tracy::OpenWebpage( "https://www.youtube.com/watch?v=uJkrFgriuOo" );
             }
+            TextComment( "2019-11-17" );
             if( ImGui::Selectable( ICON_FA_VIDEO " New features in v0.5" ) )
             {
                 tracy::OpenWebpage( "https://www.youtube.com/watch?v=P6E7qLMmzTQ" );
             }
+            TextComment( "2019-08-10" );
             if( ImGui::Selectable( ICON_FA_VIDEO " New features in v0.4" ) )
             {
                 tracy::OpenWebpage( "https://www.youtube.com/watch?v=eAkgkaO8B9o" );
             }
+            TextComment( "2018-10-09" );
             if( ImGui::Selectable( ICON_FA_VIDEO " New features in v0.3" ) )
             {
                 tracy::OpenWebpage( "https://www.youtube.com/watch?v=3SXpDpDh2Uo" );
             }
+            TextComment( "2018-07-03" );
             if( ImGui::Selectable( ICON_FA_VIDEO " Overview of v0.2" ) )
             {
                 tracy::OpenWebpage( "https://www.youtube.com/watch?v=fB5B46lbapc" );
             }
+            TextComment( "2018-03-25" );
             ImGui::EndPopup();
         }
         ImGui::SameLine();
@@ -1117,4 +1180,5 @@ static void DrawContents()
     }
 
     bptr->EndFrame();
+    if( dpiChanged > 0 ) dpiChanged--;
 }
