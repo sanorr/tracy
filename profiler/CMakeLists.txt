@@ -10,11 +10,21 @@ include(${CMAKE_CURRENT_LIST_DIR}/../cmake/version.cmake)
 
 set(CMAKE_CXX_STANDARD 20)
 
-project(
-    tracy-profiler
-    LANGUAGES ASM C CXX
-    VERSION ${TRACY_VERSION_STRING}
-)
+if(WIN32 AND MSVC)
+    # Support for the Microsoft assembler
+    project(
+        tracy-profiler
+        LANGUAGES ASM_MASM C CXX
+        VERSION ${TRACY_VERSION_STRING}
+    )
+else()
+    project(
+        tracy-profiler
+        LANGUAGES ASM C CXX
+        VERSION ${TRACY_VERSION_STRING}
+    )
+endif()
+
 
 include(${CMAKE_CURRENT_LIST_DIR}/../cmake/config.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/../cmake/vendor.cmake)
